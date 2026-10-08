@@ -1,0 +1,108 @@
+# 放到 fork 仓库的 .github/workflows/build.yml
+#
+# 为什么需要这个: 上游仓库不发布任何镜像（CI 只跑测试），而本机 Mac 是 arm64 且
+# 未安装 docker；oba 只有 1.9G 内存（可用 664M、swap 0），在上面跑 next build 会 OOM
+# 并可能连带杀掉 traefik 等在跑的生产服务。故走 fork → Actions → GHCR → oba 拉取。
+#
+# 前置（仓库 Settings 里配好，否则前端会静默退化到公共 STUN）:
+#   Variables: NEXT_PUBLIC_TURN_HOST     = turn.oba.plus
+#              NEXT_PUBLIC_TURN_USERNAME = privydrop
+#   Secrets:   NEXT_PUBLIC_TURN_PASSWORD = <必须与 VPS 上 turnserver.conf 的 user= 完全一致>
+#
+# 构建完成后还需把两个 package 设为 Public（坑③），否则 oba 匿名拉取 401。
+
+name: Build and Push Images to GHCR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-build-${{ github.ref }}
+  # 保持 false: 若上一轮 backend 已推、frontend 尚未推时被取消，
+  # 两个镜像会来自不同 commit，部署时表现为前后端版本错配。
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: frontend
+            context: ./frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ⚠ 关键约束: secrets 上下文在 jobs.<job_id>.strategy 中【不可用】
+      #   （官方 Contexts 可用性表: strategy 只支持 github / needs / vars / inputs）。
+      #   一旦把 ${{ secrets.* }} 写进 matrix，GitHub 会报
+      #   "Invalid workflow file ... Unrecognized named-value: 'secrets'"，
+      #   整个 workflow 一次都不会运行。所以这里用两个按 matrix.name 分支的 step，
+      #   把 secret 放在 steps[*].with 里（那里 secrets 合法）。
+      #   vars 可以留在 matrix 里，此处为了可读性也一并放到 step 中。
+
+      - name: Build and push backend
+        if: matrix.name == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/privydrop-backend:latest
+          # 显式传空串以清掉 Dockerfile 里 ARG HTTP_PROXY / ENV http_proxy 的继承值
+          build-args: |
+            HTTP_PROXY=
+            HTTPS_PROXY=
+            NO_PROXY=
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=PrivyDrop backend (linux/amd64)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        if: matrix.name == 'frontend'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/privydrop-frontend:latest
+          # NEXT_PUBLIC_API_URL 必须为空串: 前端与后端同源，浏览器统一走 /api 与
+          # /socket.io/，由 Traefik 分流到 backend。
+          # 源码依据: frontend/app/config/api.ts 的 `process.env.NEXT_PUBLIC_API_URL || ""`
+          #           与 frontend/lib/webrtcService.ts 的 same-origin 分支。
+          # NEXT_IMAGE_UNOPTIMIZED 真实生效: frontend/next.config.mjs 读它。
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+            NEXT_PUBLIC_TURN_HOST=${{ vars.NEXT_PUBLIC_TURN_HOST }}
+            NEXT_PUBLIC_TURN_USERNAME=${{ vars.NEXT_PUBLIC_TURN_USERNAME }}
+            NEXT_PUBLIC_TURN_PASSWORD=${{ secrets.NEXT_PUBLIC_TURN_PASSWORD }}
+            NEXT_IMAGE_UNOPTIMIZED=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=PrivyDrop frontend (linux/amd64)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
