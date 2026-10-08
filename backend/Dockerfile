@@ -1,13 +1,14 @@
 # Build stage
 FROM node:18-alpine AS builder
 
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
-
-ENV http_proxy ${HTTP_PROXY} \
-    https_proxy ${HTTPS_PROXY} \
-    no_proxy ${NO_PROXY}
+# NOTE (fork patch): upstream declared ARG HTTP_PROXY/HTTPS_PROXY/NO_PROXY and then set them
+# with Docker's legacy `ENV key value` form spread over three lines. When those build args are
+# empty (i.e. no build-time proxy configured), Docker parses the whole instruction as
+#   http_proxy="https_proxy no_proxy"
+# which is not a parseable URL, and pnpm aborts the build with ERR_PNPM_INVALID_PROXY.
+# GitHub-hosted runners and the target VPS both have direct internet access, so this block is
+# removed. If a build-time proxy is ever required, use the `=` form instead, e.g.
+#   ENV http_proxy=http://host:port https_proxy=http://host:port
 
 WORKDIR /app
 COPY package*.json ./

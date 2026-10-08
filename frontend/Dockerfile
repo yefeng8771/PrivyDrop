@@ -1,13 +1,14 @@
 # Multi-stage build — build stage
 FROM node:18-alpine AS builder
 
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
-
-ENV http_proxy ${HTTP_PROXY} \
-    https_proxy ${HTTPS_PROXY} \
-    no_proxy ${NO_PROXY}
+# NOTE (fork patch): upstream declared ARG HTTP_PROXY/HTTPS_PROXY/NO_PROXY and then set them
+# with Docker's legacy `ENV key value` form spread over three lines. When those build args are
+# empty (i.e. no build-time proxy configured), Docker parses the whole instruction as
+#   http_proxy="https_proxy no_proxy"
+# which is not a parseable URL, and pnpm aborts the build with ERR_PNPM_INVALID_PROXY.
+# GitHub-hosted runners and the target VPS both have direct internet access, so this block is
+# removed. If a build-time proxy is ever required, use the `=` form instead, e.g.
+#   ENV http_proxy=http://host:port https_proxy=http://host:port
 
 WORKDIR /app
 # Copy package files
@@ -15,7 +16,10 @@ COPY package*.json ./
 COPY pnpm-lock.yaml ./
 
 # Install pnpm
-RUN npm install -g pnpm --no-audit --no-fund
+# NOTE (fork patch): upstream installed pnpm unpinned, which today resolves to pnpm 12.
+# The repo's pnpm-lock.yaml is lockfileVersion 9.0; pinned to the major verified to
+# accept it with --frozen-lockfile (pnpm 10.33.0 tested locally: passes, lockfile unmodified).
+RUN npm install -g pnpm@10 --no-audit --no-fund
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
