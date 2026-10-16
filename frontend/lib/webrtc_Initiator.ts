@@ -33,6 +33,13 @@ export default class WebRTC_Initiator extends BaseWebRTC {
   private async handleReady({ peerId }: { peerId: string }): Promise<void> {
     // Recipient peerId
     // this.log('log',`Received ready signal from peer ${peerId}`);
+    // Ignore stale ready signals received after leaving the room. A socket
+    // can briefly remain subscribed to the socket.io room after leave, and
+    // answering it would resurrect a connection the user just tore down.
+    if (!this.isInRoom) {
+      this.log("info", "ready_signal_ignored_not_in_room", { peerId });
+      return;
+    }
     logger.debug({
       event: "ready_signal_received",
       context: { peerId },
