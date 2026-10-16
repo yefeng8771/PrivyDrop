@@ -219,7 +219,14 @@ export class StreamingFileReader {
    */
   private async readFileSlice(fileSlice: Blob): Promise<ArrayBuffer> {
     return new Promise((resolve, reject) => {
+      // Guard against a FileReader that never settles: without this, a stuck
+      // read hangs the whole send queue silently (no error, no progress).
+      const timeout = setTimeout(() => {
+        reject(new Error("FileReader timed out after 30s"));
+      }, 30_000);
+
       this.fileReader.onload = () => {
+        clearTimeout(timeout);
         const result = this.fileReader.result as ArrayBuffer;
         if (result) {
           resolve(result);
@@ -229,6 +236,7 @@ export class StreamingFileReader {
       };
 
       this.fileReader.onerror = () => {
+        clearTimeout(timeout);
         reject(
           new Error(
             `File reading failed: ${

@@ -168,6 +168,16 @@ const leaveRoomHandler: RequestHandler<{}, any, LeaveRoomRequest> = async (
     const io = req.app.get('io');
     if (io) {
       io.to(roomId).emit("peer-disconnected", { peerId: socketId });
+      // Also remove the socket from the socket.io room itself. The Redis
+      // unbind below only clears our own bookkeeping; without this, the
+      // socket stays subscribed and keeps receiving room broadcasts
+      // ("ready", "recipient-ready", ...). A rejoining peer's broadcast
+      // would then resurrect a connection the user just tore down
+      // (e.g. receiver never shows "Sender disconnected").
+      const leavingSocket = io.sockets.sockets.get(socketId);
+      if (leavingSocket) {
+        leavingSocket.leave(roomId);
+      }
     }
 
     await roomService.unbindSocketFromRoom(socketId, roomId);
