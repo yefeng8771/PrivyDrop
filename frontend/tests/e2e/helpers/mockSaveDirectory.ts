@@ -185,8 +185,24 @@ export async function installMockSaveDirectory(
             currentBytes.length,
             this.position + incomingBytes.length
           );
-          const merged = new Uint8Array(nextLength);
 
+          if (storageMode === "memory") {
+            // Grow geometrically instead of copying the entire file per chunk.
+            // Keep a length-limited view so reads never expose spare capacity.
+            let buffer = currentBytes.buffer as ArrayBuffer;
+            if (currentBytes.byteOffset !== 0 || buffer.byteLength < nextLength) {
+              const capacity = Math.max(nextLength, currentBytes.length * 2, 1024);
+              buffer = new ArrayBuffer(capacity);
+              new Uint8Array(buffer).set(currentBytes);
+            }
+            const merged = new Uint8Array(buffer, 0, nextLength);
+            merged.set(incomingBytes, this.position);
+            this.position += incomingBytes.length;
+            memoryStore.set(this.targetPath, merged);
+            return;
+          }
+
+          const merged = new Uint8Array(nextLength);
           merged.set(currentBytes);
           merged.set(incomingBytes, this.position);
           this.position += incomingBytes.length;
