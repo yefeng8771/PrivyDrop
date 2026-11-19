@@ -32,7 +32,10 @@ async function waitForClipboardAppReady(page: Page) {
   });
 
   for (let poll = 0; poll < 40; poll += 1) {
-    if (await senderRoomInput.isVisible().catch(() => false)) {
+    if (
+      (await senderRoomInput.isVisible().catch(() => false)) &&
+      (await senderRoomInput.getAttribute("data-hydrated").catch(() => null)) === "true"
+    ) {
       return;
     }
 

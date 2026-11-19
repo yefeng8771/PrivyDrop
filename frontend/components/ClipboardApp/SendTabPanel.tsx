@@ -72,6 +72,10 @@ export function SendTabPanel({
     isSenderInRoom,
     sharePeerCount,
   } = useFileTransferStore();
+  // A visible SSR input is not interactive until this panel hydrates.
+  const [isHydrated, setIsHydrated] = useState(false);
+  useEffect(() => setIsHydrated(true), []);
+
   // Local state for immediate response in the input field
   const [inputFieldValue, setInputFieldValue] = useState<string>(
     currentValidatedShareRoomId
@@ -191,6 +195,7 @@ export function SendTabPanel({
             <Input
               aria-label="Share Room ID"
               data-testid="sender-room-id-input"
+              data-hydrated={isHydrated}
               value={inputFieldValue}
               onChange={handleInputChange}
               onPaste={handlePaste}
